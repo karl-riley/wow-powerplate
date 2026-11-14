@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Power Plate
-## Notes: Colors party and other-player nameplates. Other players can be hidden.
+## Notes: Colors party, raid, guild, friend, recent-ally, and other player nameplates. Each category can be hidden.
 ## SavedVariables: PowerPlateDB
 
 PowerPlate.lua

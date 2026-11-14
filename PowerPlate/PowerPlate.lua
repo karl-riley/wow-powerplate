@@ -1,14 +1,39 @@
-local VERSION = "0.11"
-local DEFAULT_PARTY_COLOR = { r = 1, g = 105 / 255, b = 180 / 255 }
-local DEFAULT_OTHER_COLOR = { r = 99 / 255, g = 99 / 255, b = 99 / 255 }
-local DEFAULT_HIDE_OTHERS = true
+local VERSION = "0.14"
+local PARTY_COLOR = { r = 1, g = 105 / 255, b = 180 / 255 }
+local RAID_COLOR = { r = 80 / 255, g = 140 / 255, b = 1 }
+local GUILD_COLOR = { r = 80 / 255, g = 200 / 255, b = 120 / 255 }
+local FRIEND_COLOR = { r = 1, g = 176 / 255, b = 64 / 255 }
+local RECENT_COLOR = { r = 83 / 255, g = 201 / 255, b = 1 }
+local OTHER_COLOR = { r = 99 / 255, g = 99 / 255, b = 99 / 255 }
+local CATEGORIES = {
+	{ key = "party", label = "Party", color = PARTY_COLOR, hide = false },
+	{ key = "raid", label = "Raid", color = RAID_COLOR, hide = false },
+	{ key = "guild", label = "Guild", color = GUILD_COLOR, hide = false },
+	{ key = "friend", label = "Friends", color = FRIEND_COLOR, hide = false },
+	{ key = "recent", label = "Recent Allies", color = RECENT_COLOR, hide = false },
+	{ key = "other", label = "Other Players", color = OTHER_COLOR, hide = true },
+}
 local dbReady = false
 
-local function DefaultColor(key)
-	if key == "party" then
-		return DEFAULT_PARTY_COLOR
+local function CategoryByKey(key)
+	for i = 1, #CATEGORIES do
+		if CATEGORIES[i].key == key then
+			return CATEGORIES[i]
+		end
 	end
-	return DEFAULT_OTHER_COLOR
+end
+
+local function DefaultColor(key)
+	local category = CategoryByKey(key)
+	if category then
+		return category.color
+	end
+	return OTHER_COLOR
+end
+
+local function DefaultHide(key)
+	local category = CategoryByKey(key)
+	return category and category.hide or false
 end
 
 local function ColorByte(value)
@@ -26,11 +51,12 @@ local function PruneDB()
 	if type(PowerPlateDB) ~= "table" then
 		return
 	end
-	if type(PowerPlateDB.party) == "table" and PowerPlateDB.party.color == nil and next(PowerPlateDB.party) == nil then
-		PowerPlateDB.party = nil
-	end
-	if type(PowerPlateDB.other) == "table" and PowerPlateDB.other.color == nil and PowerPlateDB.other.hide == nil and next(PowerPlateDB.other) == nil then
-		PowerPlateDB.other = nil
+	for i = 1, #CATEGORIES do
+		local key = CATEGORIES[i].key
+		local entry = PowerPlateDB[key]
+		if type(entry) == "table" and entry.color == nil and entry.hide == nil and next(entry) == nil then
+			PowerPlateDB[key] = nil
+		end
 	end
 	if next(PowerPlateDB) == nil then
 		PowerPlateDB = nil
@@ -76,17 +102,20 @@ local function StoreColor(key, r, g, b)
 	saved.r, saved.g, saved.b = r, g, b
 end
 
-local function HideOthers()
-	if dbReady and type(PowerPlateDB) == "table" and type(PowerPlateDB.other) == "table" and type(PowerPlateDB.other.hide) == "boolean" then
-		return PowerPlateDB.other.hide
+local function CategoryHidden(key)
+	if not CategoryByKey(key) then
+		return false
 	end
-	return DEFAULT_HIDE_OTHERS
+	if dbReady and type(PowerPlateDB) == "table" and type(PowerPlateDB[key]) == "table" and type(PowerPlateDB[key].hide) == "boolean" then
+		return PowerPlateDB[key].hide
+	end
+	return DefaultHide(key)
 end
 
-local function StoreHide(hide)
-	if hide == DEFAULT_HIDE_OTHERS then
-		if type(PowerPlateDB) == "table" and type(PowerPlateDB.other) == "table" then
-			PowerPlateDB.other.hide = nil
+local function StoreHide(key, hide)
+	if hide == DefaultHide(key) then
+		if type(PowerPlateDB) == "table" and type(PowerPlateDB[key]) == "table" then
+			PowerPlateDB[key].hide = nil
 			PruneDB()
 		end
 		return
@@ -94,18 +123,15 @@ local function StoreHide(hide)
 	if type(PowerPlateDB) ~= "table" then
 		PowerPlateDB = {}
 	end
-	if type(PowerPlateDB.other) ~= "table" then
-		PowerPlateDB.other = {}
+	if type(PowerPlateDB[key]) ~= "table" then
+		PowerPlateDB[key] = {}
 	end
-	PowerPlateDB.other.hide = hide
+	PowerPlateDB[key].hide = hide
 end
 
 local function ColorForKind(kind)
-	if kind == "party" then
-		return CategoryColor("party")
-	end
-	if kind == "other" and not HideOthers() then
-		return CategoryColor("other")
+	if CategoryByKey(kind) and not CategoryHidden(kind) then
+		return CategoryColor(kind)
 	end
 end
 
@@ -138,6 +164,10 @@ local WATCHED_CVARS = {
 	"nameplateSimplifiedTypes",
 	"nameplateShowAll",
 	"UnitNameFriendlyPlayerName",
+	"UnitNameFriendlyPetName",
+	"UnitNameEnemyPetName",
+	"nameplateShowFriendlyPets",
+	"nameplateShowEnemyPets",
 	"nameplateMinAlpha",
 	"nameplateMaxAlpha",
 	"nameplateSelectedAlpha",
@@ -218,6 +248,14 @@ local function FlattenDistanceAlpha()
 	WriteCVar("nameplateOccludedAlphaMult", "1")
 end
 
+local function EnablePetNameplates()
+	Log("Pet names are world text until pet nameplates are on. A pet plate then follows its owner.")
+	WriteCVar("nameplateShowFriendlyPets", "1")
+	WriteCVar("nameplateShowEnemyPets", "1")
+	WriteCVar("UnitNameFriendlyPetName", "0")
+	WriteCVar("UnitNameEnemyPetName", "0")
+end
+
 local function EnableFriendlyNameplates()
 	Log("The name over a player is 3D world text until friendly nameplates are on. Addons can color only the nameplate.")
 	WriteCVar("nameplateShowFriendlyPlayers", "1")
@@ -254,45 +292,219 @@ local function SameUnit(a, b)
 	return nil
 end
 
-local function InMyParty(unit)
-	if IsSecret(unit) then
-		return false, "unit <secret>"
+local function CallTruthy(func, ...)
+	if type(func) ~= "function" then
+		return false
 	end
-	if not unit or type(unit) ~= "string" then
-		return false, "unit " .. SafeString(unit)
+	local ok, value = pcall(func, ...)
+	if not ok then
+		return false
 	end
-	local ok, inParty = pcall(UnitInParty, unit)
-	local partyTruth
-	if ok then
-		partyTruth = Truthy(inParty)
+	return Truthy(value)
+end
+
+local function InRaidGroup()
+	return CallTruthy(IsInRaid) == true
+end
+
+local function GroupCount()
+	if type(GetNumGroupMembers) ~= "function" then
+		return 0
 	end
-	if partyTruth then
-		return true, "UnitInParty"
+	local ok, count = pcall(GetNumGroupMembers)
+	if ok and type(count) == "number" and count > 0 then
+		return count
 	end
-	local secretCompare = false
-	local compared = 0
+	return 0
+end
+
+local function SelectionType(unit)
+	if type(UnitSelectionType) ~= "function" then
+		return false, nil
+	end
+	local ok, value = pcall(UnitSelectionType, unit, true)
+	if not ok then
+		return false, nil
+	end
+	if IsSecret(value) then
+		return true, nil
+	end
+	return false, tonumber(value)
+end
+
+local function FriendByName(unit)
+	if not (C_FriendList and type(C_FriendList.GetFriendInfo) == "function") then
+		return false
+	end
+	local ok, name, server = pcall(UnitName, unit)
+	if not ok or IsSecret(name) or type(name) ~= "string" or name == "" then
+		return nil
+	end
+	if IsSecret(server) then
+		server = nil
+	end
+	local function Lookup(query)
+		local found, info = pcall(C_FriendList.GetFriendInfo, query)
+		if not found or IsSecret(info) then
+			return nil
+		end
+		if type(info) == "table" and (type(canaccesstable) ~= "function" or canaccesstable(info)) then
+			return true
+		end
+		return false
+	end
+	local queries = { name }
+	if type(server) == "string" and server ~= "" then
+		queries[#queries + 1] = name .. "-" .. server
+	end
+	local sawSecret = false
+	for i = 1, #queries do
+		local matched = Lookup(queries[i])
+		if matched == nil then
+			sawSecret = true
+		elseif matched then
+			return true
+		end
+	end
+	if sawSecret then
+		return nil
+	end
+	return false
+end
+
+local function PetGuid(unit)
+	if type(UnitGUID) ~= "function" then
+		return false, nil
+	end
+	local ok, guid = pcall(UnitGUID, unit)
+	if not ok then
+		return false, nil
+	end
+	if IsSecret(guid) then
+		return true, nil
+	end
+	if type(guid) == "string" and guid:find("^Pet%-") then
+		return false, true
+	end
+	return false, false
+end
+
+-- A pet uses its owner's category. UnitInParty is true for raid members here, so a player
+-- is Party only for party1-4, or for UnitInSubgroup while they are outside a raid.
+local function PetOwner(unit)
+	local yours = SameUnit(unit, "pet")
+	if yours == true then
+		return "player", "your pet"
+	end
+	local otherPet = CallTruthy(UnitIsOtherPlayersPet, unit)
+	local guidSecret, guidPet = PetGuid(unit)
+	local controlled = CallTruthy(UnitPlayerControlled, unit)
+	local confirmed = otherPet == true or guidPet == true
+	local possible = confirmed or controlled == true or yours == nil or otherPet == nil or guidSecret or controlled == nil
+	if not possible then
+		return false
+	end
+	local sawSecret = yours == nil or otherPet == nil or guidSecret or controlled == nil
+	local function SameToken(token)
+		if not Truthy(UnitExists(token)) then
+			return false
+		end
+		local same = SameUnit(unit, token)
+		if same == nil then
+			sawSecret = true
+			return false
+		end
+		return same
+	end
 	for i = 1, 4 do
-		local partyUnit = "party" .. i
-		if Truthy(UnitExists(partyUnit)) then
-			compared = compared + 1
-			local same = SameUnit(unit, partyUnit)
-			if same == nil then
-				secretCompare = true
-			elseif same then
-				return true, "UnitIsUnit " .. partyUnit
+		if SameToken("partypet" .. i) then
+			return "party" .. i, "partypet" .. i
+		end
+	end
+	if InRaidGroup() then
+		local count = GroupCount()
+		for i = 1, count do
+			if SameToken("raidpet" .. i) then
+				return "raid" .. i, "raidpet" .. i
 			end
 		end
 	end
-	if partyTruth == false then
-		return false, "not in party"
+	if type(UnitOwnerGUID) == "function" and type(UnitTokenFromGUID) == "function" then
+		local ok, guid = pcall(UnitOwnerGUID, unit)
+		if ok and IsSecret(guid) then
+			sawSecret = true
+		elseif ok and type(guid) == "string" then
+			local tokenOk, token = pcall(UnitTokenFromGUID, guid)
+			if tokenOk and IsSecret(token) then
+				sawSecret = true
+			elseif tokenOk and type(token) == "string" and token ~= "" then
+				return token, "UnitOwnerGUID"
+			end
+		end
 	end
-	if compared > 0 and not secretCompare then
-		return false, "not in party"
+	local function Consider(candidate)
+		if type(candidate) ~= "string" or candidate == unit or IsSecret(candidate) then
+			return nil
+		end
+		local owns = CallTruthy(UnitIsOwnerOrControllerOfUnit, candidate, unit)
+		if owns == nil then
+			sawSecret = true
+			return nil
+		end
+		if owns then
+			return candidate
+		end
 	end
-	return false, "party check secret"
+	local owner = Consider("player")
+	if owner then
+		return owner, "player owns"
+	end
+	for i = 1, 4 do
+		owner = Consider("party" .. i)
+		if owner then
+			return owner, "party" .. i .. " owns"
+		end
+	end
+	if InRaidGroup() then
+		local count = GroupCount()
+		for i = 1, count do
+			owner = Consider("raid" .. i)
+			if owner then
+				return owner, "raid" .. i .. " owns"
+			end
+		end
+	end
+	if C_NamePlate and C_NamePlate.GetNamePlates then
+		local ok, plates = pcall(C_NamePlate.GetNamePlates, false)
+		if ok and type(plates) == "table" then
+			for _, plate in pairs(plates) do
+				local token = plate.namePlateUnitToken
+				if IsSecret(token) or type(token) ~= "string" then
+					local frame = plate.UnitFrame
+					token = frame and frame.unit
+				end
+				if type(token) == "string" and not IsSecret(token) then
+					local same = SameUnit(token, unit)
+					if same == nil then
+						sawSecret = true
+					elseif not same then
+						owner = Consider(token)
+						if owner then
+							return owner, "nameplate owns"
+						end
+					end
+				end
+			end
+		end
+	end
+	local minion = CallTruthy(UnitIsMinion, unit)
+	if not (confirmed or controlled == true or minion == true) then
+		return false
+	end
+	return nil, "unowned pet"
 end
 
-local function Classify(unit)
+local function Classify(unit, depth)
 	if IsSecret(unit) or type(unit) ~= "string" then
 		return "unknown", "unit " .. SafeString(unit)
 	end
@@ -303,21 +515,75 @@ local function Classify(unit)
 	if isSelf == nil then
 		return "unknown", "you check secret"
 	end
-	local inParty, why = InMyParty(unit)
-	if inParty then
-		return "party", why
+	local isPlayer = CallTruthy(UnitIsPlayer, unit)
+	if isPlayer ~= true and (depth or 0) == 0 then
+		local owner, ownerWhy = PetOwner(unit)
+		if owner and SameUnit(owner, unit) ~= true then
+			local kind, why = Classify(owner, 1)
+			return kind, "pet of " .. owner .. " via " .. ownerWhy .. " (" .. why .. ")"
+		end
+		if owner == nil then
+			if ownerWhy == "unowned pet" or ownerWhy == "pet owner secret" then
+				return "other", ownerWhy
+			end
+			return "unknown", ownerWhy
+		end
 	end
-	if why == "party check secret" then
-		return "unknown", why
-	end
-	local isPlayer = UnitIsPlayer(unit)
-	if Truthy(isPlayer) == nil then
+	if isPlayer == nil then
 		return "unknown", "UnitIsPlayer secret"
 	end
-	if Truthy(isPlayer) then
-		return "other", why
+	if not isPlayer then
+		return "npc", "not a player"
 	end
-	return "npc", "not a player"
+	local partySecret = false
+	for i = 1, 4 do
+		local partyUnit = "party" .. i
+		if Truthy(UnitExists(partyUnit)) then
+			local same = SameUnit(unit, partyUnit)
+			if same == nil then
+				partySecret = true
+			elseif same then
+				return "party", "UnitIsUnit " .. partyUnit
+			end
+		end
+	end
+	if partySecret then
+		return "unknown", "party check secret"
+	end
+	local raid = CallTruthy(UnitPlayerOrPetInRaid, unit)
+	if raid == nil then
+		return "unknown", "raid check secret"
+	end
+	if not raid then
+		local subgroup = CallTruthy(UnitInSubgroup, unit)
+		if subgroup == nil then
+			return "unknown", "subgroup check secret"
+		end
+		if subgroup then
+			return "party", "UnitInSubgroup"
+		end
+	elseif raid then
+		return "raid", "UnitPlayerOrPetInRaid"
+	end
+	local guild = CallTruthy(UnitIsInMyGuild, unit)
+	if guild == nil then
+		return "unknown", "guild check secret"
+	end
+	if guild then
+		return "guild", "UnitIsInMyGuild"
+	end
+	local selectionSecret, selection = SelectionType(unit)
+	if selectionSecret then
+		return "unknown", "selection type secret"
+	end
+	local friendNamed = FriendByName(unit)
+	if selection == 8 or friendNamed == true then
+		return "friend", selection == 8 and "selection 8" or "GetFriendInfo"
+	end
+	if selection == 16 then
+		return "recent", "selection 16"
+	end
+	return "other", "player"
 end
 
 local function TokenOnPlate(plate)
@@ -592,17 +858,20 @@ local function LockHidden(plate, frame)
 			if IsSecret(unit) or type(unit) ~= "string" then
 				unit = FindUnit(self)
 			end
-			if Classify(unit) ~= "other" or not HideOthers() then
-				return
+			local kind = Classify(unit)
+			if CategoryByKey(kind) and CategoryHidden(kind) then
+				ApplyHidden(self, true)
 			end
-			ApplyHidden(self, true)
 		end)
 		if frame.SetScale then
 			hooksecurefunc(frame, "SetScale", function(self)
-				if self.PowerPlateApplying or self.PowerPlateKind ~= "other" or not HideOthers() then
+				if self.PowerPlateApplying then
 					return
 				end
-				ApplyHidden(self, true)
+				local kind = self.PowerPlateKind
+				if CategoryByKey(kind) and CategoryHidden(kind) then
+					ApplyHidden(self, true)
+				end
 			end)
 		end
 	end
@@ -614,13 +883,18 @@ local function LockHidden(plate, frame)
 			if not child or (child.IsForbidden and child:IsForbidden()) then
 				return
 			end
-			local kind = Classify(PlateUnit(self))
+			local unit = PlateUnit(self)
+			local kind = Classify(unit)
+			local previous = child.PowerPlateKind
 			self.PowerPlateKind = kind
 			child.PowerPlateKind = kind
-			local hideOther = kind == "other" and HideOthers()
-			if hideOther then
+			if kind ~= previous then
+				Paint(self, child, unit, "category change", true)
+				return
+			end
+			if CategoryByKey(kind) and CategoryHidden(kind) then
 				ApplyHidden(child, true)
-			elseif child.PowerPlateHidden and (kind == "party" or kind == "npc" or kind == "self" or kind == "other") then
+			elseif child.PowerPlateHidden and (kind == "npc" or kind == "self" or CategoryByKey(kind)) then
 				ApplyHidden(child, false)
 			end
 		end)
@@ -657,9 +931,9 @@ local function Paint(plate, frame, unit, reason, quiet)
 	end
 	local nameHooked, barHooked, hideHooked = false, false, false
 	local hiddenNote = "hidden=no"
-	local hideOther = kind == "other" and HideOthers()
-	local colorThis = kind == "party" or (kind == "other" and not HideOthers())
-	if frame.PowerPlateHidden and (kind == "party" or kind == "npc" or kind == "self" or colorThis) then
+	local hideThis = CategoryByKey(kind) ~= nil and CategoryHidden(kind)
+	local colorThis = CategoryByKey(kind) ~= nil and not hideThis
+	if frame.PowerPlateHidden and (kind == "npc" or kind == "self" or colorThis) then
 		local ok, err = ApplyHidden(frame, false)
 		if ok then
 			hiddenNote = "hidden=restored"
@@ -684,31 +958,31 @@ local function Paint(plate, frame, unit, reason, quiet)
 			end
 		end
 	end
-	if kind == "other" then
-		hideHooked = LockHidden(plate, frame)
-		if hideOther then
-			local ok, err = ApplyHidden(frame, true)
-			if ok then
-				hiddenNote = "hidden=yes"
-			else
-				Log(SafeString(unit) .. " hide error: " .. SafeString(err))
-				hiddenNote = "hidden=error"
-			end
+	hideHooked = LockHidden(plate, frame)
+	if hideThis then
+		local ok, err = ApplyHidden(frame, true)
+		if ok then
+			hiddenNote = "hidden=yes"
+		else
+			Log(SafeString(unit) .. " hide error: " .. SafeString(err))
+			hiddenNote = "hidden=error"
 		end
 	end
 	if not quiet then
 		local action = "skip"
-		if kind == "party" or (kind == "other" and not hideOther) then
+		if colorThis then
 			action = "COLOR"
-		elseif kind == "other" then
+		elseif hideThis then
 			action = "HIDE"
 		end
+		local _, selection = SelectionType(unit)
 		Log(string.format(
-			"%s %s via %s | %s | name=%s hooked=%s | bar=%s hooked=%s | hideHook=%s",
+			"%s %s via %s | %s | select=%s | name=%s hooked=%s | bar=%s hooked=%s | hideHook=%s",
 			SafeString(unit),
 			action,
 			why,
 			hiddenNote,
+			SafeString(selection),
 			name and "yes" or "no",
 			nameHooked and "new" or (name and name.PowerPlateLocked and "already" or "no"),
 			bar and "yes" or "no",
@@ -781,14 +1055,18 @@ local optionsPanel
 
 local function RefreshOptionsPanel()
 	local panel = optionsPanel
-	if not panel then
+	if not panel or not panel.rows then
 		return
 	end
-	local partyR, partyG, partyB = CategoryColor("party")
-	panel.partySwatch:SetColorTexture(partyR, partyG, partyB, 1)
-	local otherR, otherG, otherB = CategoryColor("other")
-	panel.otherSwatch:SetColorTexture(otherR, otherG, otherB, 1)
-	panel.hideOthers:SetChecked(HideOthers())
+	for i = 1, #CATEGORIES do
+		local key = CATEGORIES[i].key
+		local row = panel.rows[key]
+		if row then
+			local r, g, b = CategoryColor(key)
+			row.swatch:SetColorTexture(r, g, b, 1)
+			row.hide:SetChecked(CategoryHidden(key))
+		end
+	end
 end
 
 local function OpenColorPicker(key)
@@ -847,44 +1125,73 @@ local function BuildOptions()
 		line:SetText(text)
 		return line
 	end
-	local function Rule(y)
-		local line = panel:CreateTexture(nil, "ARTWORK")
+	local function Rule(parent, y, width)
+		local line = parent:CreateTexture(nil, "ARTWORK")
 		line:SetColorTexture(0.55, 0.5, 0.38, 0.9)
 		line:SetPoint("TOPLEFT", 16, y)
-		line:SetSize(480, 1)
+		line:SetSize(width or 460, 1)
 	end
-	local function ColorRow(key, swatchKey, y)
-		local swatch = panel:CreateTexture(nil, "OVERLAY")
-		swatch:SetPoint("TOPLEFT", 16, y)
+	panel:SetClipsChildren(true)
+	local scroll = CreateFrame("ScrollFrame", "PowerPlateOptionsScroll", panel, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", 0, 0)
+	scroll:SetPoint("BOTTOMRIGHT", -28, 0)
+	local content = CreateFrame("Frame", nil, scroll)
+	content:SetSize(500, 400)
+	scroll:SetScrollChild(content)
+	scroll:EnableMouseWheel(true)
+	scroll:SetScript("OnMouseWheel", function(self, delta)
+		local bar = self.ScrollBar or _G[self:GetName() .. "ScrollBar"]
+		if not bar then
+			return
+		end
+		local minValue, maxValue = bar:GetMinMaxValues()
+		local value = bar:GetValue() - delta * 48
+		if value < minValue then
+			value = minValue
+		elseif value > maxValue then
+			value = maxValue
+		end
+		bar:SetValue(value)
+	end)
+	Label(content, "Power Plate", 16, -16, 16, 460)
+	panel.rows = {}
+	local y = -44
+	for i = 1, #CATEGORIES do
+		local category = CATEGORIES[i]
+		local key = category.key
+		Rule(content, y, 460)
+		Label(content, category.label, 16, y - 12, 14, 460)
+		local swatch = content:CreateTexture(nil, "OVERLAY")
+		swatch:SetPoint("TOPLEFT", 16, y - 38)
 		swatch:SetSize(22, 22)
-		panel[swatchKey] = swatch
-		local button = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+		local button = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
 		button:SetPoint("LEFT", swatch, "RIGHT", 8, 0)
 		button:SetSize(80, 22)
 		button:SetText("Color")
 		button:SetScript("OnClick", function()
 			OpenColorPicker(key)
 		end)
+		local hide = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+		hide:SetPoint("TOPLEFT", 16, y - 72)
+		hide:SetSize(26, 26)
+		local caption = Label(hide, "Hide", 0, 0, 12, 420)
+		caption:ClearAllPoints()
+		caption:SetPoint("LEFT", hide, "RIGHT", 4, 0)
+		hide:SetScript("OnClick", function(self)
+			StoreHide(key, self:GetChecked() and true or false)
+			RefreshPlates("options")
+		end)
+		panel.rows[key] = { swatch = swatch, hide = hide }
+		y = y - 112
 	end
-	Label(panel, "Power Plate", 16, -16, 16, 530)
-	Rule(-44)
-	Label(panel, "Party", 16, -56, 14, 460)
-	ColorRow("party", "partySwatch", -82)
-	Rule(-118)
-	Label(panel, "Other Players", 16, -130, 14, 460)
-	ColorRow("other", "otherSwatch", -156)
-	local hide = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-	hide:SetPoint("TOPLEFT", 16, -192)
-	hide:SetSize(26, 26)
-	panel.hideOthers = hide
-	local caption = Label(hide, "Hide", 0, 0, 12, 420)
-	caption:ClearAllPoints()
-	caption:SetPoint("LEFT", hide, "RIGHT", 4, 0)
-	hide:SetScript("OnClick", function(self)
-		StoreHide(self:GetChecked() == true)
-		RefreshPlates("options")
+	content:SetHeight(-y + 16)
+	panel:SetScript("OnShow", function(self)
+		local width = scroll:GetWidth()
+		if type(width) == "number" and width > 80 then
+			content:SetWidth(width - 4)
+		end
+		RefreshOptionsPanel()
 	end)
-	panel:SetScript("OnShow", RefreshOptionsPanel)
 	RefreshOptionsPanel()
 	local category = Settings.RegisterCanvasLayoutCategory(panel, "Power Plate")
 	Settings.RegisterAddOnCategory(category)
@@ -905,6 +1212,7 @@ local function Dump()
 	end
 	Log("party members besides you: " .. partyCount)
 	FlattenDistanceAlpha()
+	EnablePetNameplates()
 	local openCount, protectedCount = LogPlateAvailability("dump")
 	if openCount == 0 and protectedCount == 0 then
 		EnableFriendlyNameplates()
@@ -915,10 +1223,21 @@ local function Dump()
 end
 
 local events = CreateFrame("Frame")
+local REFRESH_EVENTS = {
+	GUILD_ROSTER_UPDATE = true,
+	PLAYER_GUILD_UPDATE = true,
+	FRIENDLIST_UPDATE = true,
+	RECENT_ALLIES_CACHE_UPDATE = true,
+	RECENT_ALLY_DATA_UPDATED = true,
+	UNIT_PET = true,
+}
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 events:RegisterEvent("GROUP_ROSTER_UPDATE")
+for eventName in pairs(REFRESH_EVENTS) do
+	events:RegisterEvent(eventName)
+end
 events:SetScript("OnEvent", function(_, event, arg1)
 	if event == "ADDON_LOADED" then
 		if arg1 == "PowerPlate" then
@@ -933,6 +1252,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		EnsureHooks()
 		Log("ready v" .. VERSION .. ". Options: Escape, Options, AddOns, Power Plate. /powerplate dumps.")
 		FlattenDistanceAlpha()
+		EnablePetNameplates()
 		local openCount, protectedCount = LogPlateAvailability("login")
 		if openCount == 0 and protectedCount == 0 then
 			EnableFriendlyNameplates()
@@ -954,6 +1274,8 @@ events:SetScript("OnEvent", function(_, event, arg1)
 			EnableFriendlyNameplates()
 		end
 		RefreshPlates("group update")
+	elseif REFRESH_EVENTS[event] then
+		RefreshPlates(event, true)
 	end
 end)
 
