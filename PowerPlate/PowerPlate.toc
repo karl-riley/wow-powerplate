@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Power Plate
+## Notes: Colors party and other-player nameplates. Other players can be hidden.
+## SavedVariables: PowerPlateDB
+
+PowerPlate.lua
