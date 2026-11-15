@@ -1,4 +1,5 @@
-local VERSION = "0.14"
+local ns = select(2, ...)
+local VERSION = ns.VERSION or "?"
 local PARTY_COLOR = { r = 1, g = 105 / 255, b = 180 / 255 }
 local RAID_COLOR = { r = 80 / 255, g = 140 / 255, b = 1 }
 local GUILD_COLOR = { r = 80 / 255, g = 200 / 255, b = 120 / 255 }
@@ -6,12 +7,12 @@ local FRIEND_COLOR = { r = 1, g = 176 / 255, b = 64 / 255 }
 local RECENT_COLOR = { r = 83 / 255, g = 201 / 255, b = 1 }
 local OTHER_COLOR = { r = 99 / 255, g = 99 / 255, b = 99 / 255 }
 local CATEGORIES = {
-	{ key = "party", label = "Party", color = PARTY_COLOR, hide = false },
-	{ key = "raid", label = "Raid", color = RAID_COLOR, hide = false },
-	{ key = "guild", label = "Guild", color = GUILD_COLOR, hide = false },
-	{ key = "friend", label = "Friends", color = FRIEND_COLOR, hide = false },
-	{ key = "recent", label = "Recent Allies", color = RECENT_COLOR, hide = false },
-	{ key = "other", label = "Other Players", color = OTHER_COLOR, hide = true },
+	{ key = "party", label = "Party", color = PARTY_COLOR, hide = false, colorTip = "Defines the nameplate color for players in your party.", hideTip = "Hides nameplates for players in your party." },
+	{ key = "raid", label = "Raid", color = RAID_COLOR, hide = false, colorTip = "Defines the nameplate color for other players in your raid.", hideTip = "Hides nameplates for other players in your raid." },
+	{ key = "guild", label = "Guild", color = GUILD_COLOR, hide = false, colorTip = "Defines the nameplate color for guild members.", hideTip = "Hides nameplates for guild members." },
+	{ key = "friend", label = "Friends", color = FRIEND_COLOR, hide = false, colorTip = "Defines the nameplate color for friends.", hideTip = "Hides nameplates for friends." },
+	{ key = "recent", label = "Recent Allies", color = RECENT_COLOR, hide = false, colorTip = "Defines the nameplate color for recent allies.", hideTip = "Hides nameplates for recent allies." },
+	{ key = "other", label = "Other Players", color = OTHER_COLOR, hide = true, colorTip = "Defines the nameplate color for every other player.", hideTip = "Hides nameplates for every other player." },
 }
 local dbReady = false
 
@@ -129,6 +130,24 @@ local function StoreHide(key, hide)
 	PowerPlateDB[key].hide = hide
 end
 
+local function DebugEnabled()
+	return type(PowerPlateDB) == "table" and PowerPlateDB.debug == true
+end
+
+local function StoreDebug(enabled)
+	if not enabled then
+		if type(PowerPlateDB) == "table" then
+			PowerPlateDB.debug = nil
+			PruneDB()
+		end
+		return
+	end
+	if type(PowerPlateDB) ~= "table" then
+		PowerPlateDB = {}
+	end
+	PowerPlateDB.debug = true
+end
+
 local function ColorForKind(kind)
 	if CategoryByKey(kind) and not CategoryHidden(kind) then
 		return CategoryColor(kind)
@@ -154,6 +173,9 @@ local function SafeString(value)
 end
 
 local function Log(msg)
+	if not DebugEnabled() then
+		return
+	end
 	print("|cffFF69B4Power Plate:|r " .. SafeString(msg))
 end
 
@@ -1063,9 +1085,12 @@ local function RefreshOptionsPanel()
 		local row = panel.rows[key]
 		if row then
 			local r, g, b = CategoryColor(key)
-			row.swatch:SetColorTexture(r, g, b, 1)
+			row.swatch:SetColorRGB(r, g, b)
 			row.hide:SetChecked(CategoryHidden(key))
 		end
+	end
+	if panel.debug then
+		panel.debug:SetChecked(DebugEnabled())
 	end
 end
 
@@ -1103,6 +1128,29 @@ local function OpenColorPicker(key)
 	ColorPickerFrame:Show()
 end
 
+local function ShowOptionsTooltip(owner, title, text)
+	if not (SettingsTooltip and Settings and Settings.InitTooltip) then
+		return
+	end
+	SettingsTooltip:SetOwner(owner, "ANCHOR_RIGHT", 0, 0)
+	Settings.InitTooltip(title, text)
+	SettingsTooltip:Show()
+end
+
+local function HideOptionsTooltip()
+	if SettingsTooltip then
+		SettingsTooltip:Hide()
+	end
+end
+
+local function CellText(parent, text)
+	local line = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	line:SetPoint("LEFT", 0, 0)
+	line:SetJustifyH("LEFT")
+	line:SetText(text)
+	return line
+end
+
 local function BuildOptions()
 	if optionsBuilt or not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
 		if not optionsBuilt then
@@ -1111,85 +1159,119 @@ local function BuildOptions()
 		return
 	end
 	EnsureDB()
-	local font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 	local panel = CreateFrame("Frame", nil, UIParent)
 	panel:Hide()
 	optionsPanel = panel
-	local function Label(parent, text, x, y, size, width)
-		local line = parent:CreateFontString(nil, "OVERLAY")
-		line:SetFont(font, size or 12, "")
-		line:SetTextColor(0.94, 0.92, 0.85)
-		line:SetJustifyH("LEFT")
-		line:SetPoint("TOPLEFT", x, y)
-		line:SetWidth(width or 460)
-		line:SetText(text)
-		return line
+	local list = CreateFrame("Frame", nil, panel, "SettingsListTemplate")
+	list:SetAllPoints(panel)
+	list.Header.Title:SetText("Power Plate v" .. VERSION)
+	list.Header.DefaultsButton:Hide()
+	list.Header.TutorialButton:Hide()
+	list.ScrollBox:Hide()
+	list.ScrollBox:EnableMouse(false)
+	list.ScrollBox:SetAlpha(0)
+	list.ScrollBar:Hide()
+	list.ScrollBar:EnableMouse(false)
+	local rows = CreateFrame("Frame", nil, list, "StaticGridLayoutFrame")
+	rows:SetPoint("TOPLEFT", list.Header, "BOTTOMLEFT", 7, -12)
+	rows:SetFrameLevel(list.ScrollBox:GetFrameLevel() + 20)
+	rows:SetSize(520, 320)
+	rows.childXPadding = 36
+	rows.childYPadding = 6
+	rows:Show()
+	local function Place(cell, column, row, width)
+		cell.gridColumn = column
+		cell.gridRow = row
+		cell.includeAsLayoutChildWhenHidden = true
+		cell:SetSize(width, 32)
+		cell:Show()
 	end
-	local function Rule(parent, y, width)
-		local line = parent:CreateTexture(nil, "ARTWORK")
-		line:SetColorTexture(0.55, 0.5, 0.38, 0.9)
-		line:SetPoint("TOPLEFT", 16, y)
-		line:SetSize(width or 460, 1)
-	end
-	panel:SetClipsChildren(true)
-	local scroll = CreateFrame("ScrollFrame", "PowerPlateOptionsScroll", panel, "UIPanelScrollFrameTemplate")
-	scroll:SetPoint("TOPLEFT", 0, 0)
-	scroll:SetPoint("BOTTOMRIGHT", -28, 0)
-	local content = CreateFrame("Frame", nil, scroll)
-	content:SetSize(500, 400)
-	scroll:SetScrollChild(content)
-	scroll:EnableMouseWheel(true)
-	scroll:SetScript("OnMouseWheel", function(self, delta)
-		local bar = self.ScrollBar or _G[self:GetName() .. "ScrollBar"]
-		if not bar then
-			return
-		end
-		local minValue, maxValue = bar:GetMinMaxValues()
-		local value = bar:GetValue() - delta * 48
-		if value < minValue then
-			value = minValue
-		elseif value > maxValue then
-			value = maxValue
-		end
-		bar:SetValue(value)
-	end)
-	Label(content, "Power Plate", 16, -16, 16, 460)
 	panel.rows = {}
-	local y = -44
 	for i = 1, #CATEGORIES do
 		local category = CATEGORIES[i]
 		local key = category.key
-		Rule(content, y, 460)
-		Label(content, category.label, 16, y - 12, 14, 460)
-		local swatch = content:CreateTexture(nil, "OVERLAY")
-		swatch:SetPoint("TOPLEFT", 16, y - 38)
-		swatch:SetSize(22, 22)
-		local button = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-		button:SetPoint("LEFT", swatch, "RIGHT", 8, 0)
-		button:SetSize(80, 22)
-		button:SetText("Color")
-		button:SetScript("OnClick", function()
+		local nameCell = CreateFrame("Frame", nil, rows)
+		Place(nameCell, 1, i, 150)
+		local nameText = CellText(nameCell, category.label)
+		nameCell:EnableMouse(true)
+		nameCell:SetScript("OnEnter", function(self)
+			ShowOptionsTooltip(self, category.label, category.colorTip)
+		end)
+		nameCell:SetScript("OnLeave", HideOptionsTooltip)
+		local colorCell = CreateFrame("Frame", nil, rows)
+		Place(colorCell, 2, i, 110)
+		local colorText = CellText(colorCell, "Color")
+		local swatch = CreateFrame("Button", nil, colorCell, "SettingsColorSwatchTemplate")
+		swatch:SetPoint("LEFT", colorText, "RIGHT", 8, 0)
+		swatch:SetTooltipFunc(function()
+			Settings.InitTooltip(category.label, category.colorTip)
+		end)
+		swatch:SetScript("OnClick", function()
 			OpenColorPicker(key)
 		end)
-		local hide = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-		hide:SetPoint("TOPLEFT", 16, y - 72)
-		hide:SetSize(26, 26)
-		local caption = Label(hide, "Hide", 0, 0, 12, 420)
-		caption:ClearAllPoints()
-		caption:SetPoint("LEFT", hide, "RIGHT", 4, 0)
+		colorCell:EnableMouse(true)
+		colorCell:SetScript("OnEnter", function(self)
+			ShowOptionsTooltip(self, category.label, category.colorTip)
+		end)
+		colorCell:SetScript("OnLeave", HideOptionsTooltip)
+		local hideCell = CreateFrame("Frame", nil, rows)
+		Place(hideCell, 3, i, 110)
+		local hideText = CellText(hideCell, "Hide")
+		local hide = CreateFrame("CheckButton", nil, hideCell, "UICheckButtonTemplate")
+		hide:SetPoint("LEFT", hideText, "RIGHT", 2, 0)
+		hide.Text:SetText("")
+		hide:SetScript("OnEnter", function(self)
+			ShowOptionsTooltip(self, "Hide", category.hideTip)
+		end)
+		hide:SetScript("OnLeave", HideOptionsTooltip)
 		hide:SetScript("OnClick", function(self)
 			StoreHide(key, self:GetChecked() and true or false)
 			RefreshPlates("options")
 		end)
+		hideCell:EnableMouse(true)
+		hideCell:SetScript("OnEnter", function(self)
+			ShowOptionsTooltip(self, "Hide", category.hideTip)
+		end)
+		hideCell:SetScript("OnLeave", HideOptionsTooltip)
+		hideCell:SetScript("OnMouseDown", function(_, button)
+			if button == "LeftButton" then
+				hide:Click()
+			end
+		end)
 		panel.rows[key] = { swatch = swatch, hide = hide }
-		y = y - 112
 	end
-	content:SetHeight(-y + 16)
-	panel:SetScript("OnShow", function(self)
-		local width = scroll:GetWidth()
-		if type(width) == "number" and width > 80 then
-			content:SetWidth(width - 4)
+	local debugRow = #CATEGORIES + 1
+	local debugCell = CreateFrame("Frame", nil, rows)
+	Place(debugCell, 1, debugRow, 150)
+	local debugText = CellText(debugCell, "Debug")
+	local debugCheck = CreateFrame("CheckButton", nil, debugCell, "UICheckButtonTemplate")
+	debugCheck:SetPoint("LEFT", debugText, "RIGHT", 2, 0)
+	debugCheck.Text:SetText("")
+	debugCheck:SetChecked(DebugEnabled())
+	debugCheck:SetScript("OnEnter", function(self)
+		ShowOptionsTooltip(self, "Debug", "Prints Power Plate messages in chat.")
+	end)
+	debugCheck:SetScript("OnLeave", HideOptionsTooltip)
+	debugCheck:SetScript("OnClick", function(self)
+		StoreDebug(self:GetChecked() and true or false)
+	end)
+	debugCell:EnableMouse(true)
+	debugCell:SetScript("OnEnter", function(self)
+		ShowOptionsTooltip(self, "Debug", "Prints Power Plate messages in chat.")
+	end)
+	debugCell:SetScript("OnLeave", HideOptionsTooltip)
+	debugCell:SetScript("OnMouseDown", function(_, button)
+		if button == "LeftButton" then
+			debugCheck:Click()
 		end
+	end)
+	panel.debug = debugCheck
+	rows:Layout()
+	panel:SetScript("OnShow", function()
+		list.ScrollBox:Hide()
+		list.ScrollBar:Hide()
+		rows:Show()
+		rows:Layout()
 		RefreshOptionsPanel()
 	end)
 	RefreshOptionsPanel()

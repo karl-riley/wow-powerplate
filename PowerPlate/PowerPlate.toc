@@ -3,4 +3,5 @@
 ## Notes: Colors party, raid, guild, friend, recent-ally, and other player nameplates. Each category can be hidden.
 ## SavedVariables: PowerPlateDB
 
+Version.lua
 PowerPlate.lua
