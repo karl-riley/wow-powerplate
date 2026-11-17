@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wow-fishing"
+version = "0.1.0"
+description = "Hobby/learning project: detect a fishing splash audio cue on Windows and press the fishing key."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Windows-only runtime libraries. They are imported lazily, so the package
+# and its tests work without them (e.g. on Linux).
+windows = [
+    "pydirectinput>=1.0.4; sys_platform == 'win32'",
+    "PyAudioWPatch>=0.2.12; sys_platform == 'win32'",
+    "keyboard>=0.13.5; sys_platform == 'win32'",
+]
+visual = [
+    "mss>=9.0",
+    "opencv-python>=4.9",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+wow-fishing = "wow_fishing.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]

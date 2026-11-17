@@ -1,0 +1,29 @@
+# Copy to config.toml and adjust. Every value shown here is the default.
+
+[input]
+# Key bound to Fishing in the game's action bar.
+key = "1"
+# Seconds between the first and second key press after a cue.
+delay_between_presses = 1.0
+
+[loop]
+# Seconds to wait for a cue before giving up on this cycle and trying again.
+cue_timeout = 30.0
+# Global hotkeys (Windows). Pause toggles; quit stops the loop.
+pause_hotkey = "f9"
+quit_hotkey = "f10"
+
+[audio]
+# Band (Hz) where the splash cue has most of its energy. Tune with tools/record_sample.py.
+band_low_hz = 1000.0
+band_high_hz = 5000.0
+# Analysis window length in milliseconds.
+chunk_ms = 50
+# A cue fires when band energy exceeds spike_ratio times the running baseline...
+spike_ratio = 6.0
+# ...and the chunk's overall RMS is above this absolute floor (0.0 - 1.0 full scale).
+min_rms = 0.01
+# Seconds to ignore further spikes after a cue fires.
+cooldown = 2.0
+# Smoothing factor for the running baseline (0 - 1, smaller adapts slower).
+baseline_alpha = 0.05
