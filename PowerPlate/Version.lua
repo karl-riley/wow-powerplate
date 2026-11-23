@@ -1,2 +1,2 @@
 local ns = select(2, ...)
-ns.VERSION = "0.18"
+ns.VERSION = "0.20"

@@ -37,3 +37,8 @@ Use
     color and Hide option.
   - Debug (bottom of that page) prints Power Plate messages in chat.
     It is off by default. /powerplate prints a status dump when Debug is on.
+  - /powerplate max=X sets the max nameplate distance in yards (1 to 1000).
+    /powerplate max shows the current value, and /powerplate max=reset
+    restores the game default. The value is saved and re-applied at login.
+    The game may clamp it, so the command reports what it actually reads back.
+    /pp works as a shortcut for /powerplate.

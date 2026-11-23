@@ -394,6 +394,167 @@ local function FriendByName(unit)
 	return false
 end
 
+-- Battle.net friends are a second list. Selection type 8 and GetFriendInfo only
+-- know character-name friends. A logged-in Battle.net character is matched here,
+-- before Recent Allies, by guid when it is public and by name otherwise.
+local bnetNames
+local bnetCount = 0
+
+local function NormToken(text)
+	return text:lower():gsub("[%s%-]", "")
+end
+
+local function ReadableTable(value)
+	return type(value) == "table" and not IsSecret(value) and (type(canaccesstable) ~= "function" or canaccesstable(value))
+end
+
+local function PlayerRealmKeys()
+	local keys = {}
+	local function add(fn)
+		if type(fn) ~= "function" then
+			return
+		end
+		local ok, realm = pcall(fn)
+		if ok and not IsSecret(realm) and type(realm) == "string" and realm ~= "" then
+			keys[NormToken(realm)] = true
+		end
+	end
+	add(GetRealmName)
+	add(GetNormalizedRealmName)
+	if next(keys) == nil then
+		return nil
+	end
+	return keys
+end
+
+local function NoteBNetCharacter(names, mine, info)
+	if not ReadableTable(info) then
+		return false
+	end
+	local client = info.clientProgram
+	if IsSecret(client) or type(client) ~= "string" or client ~= (BNET_CLIENT_WOW or "WoW") then
+		return false
+	end
+	local project = info.wowProjectID
+	if type(WOW_PROJECT_ID) == "number" and not IsSecret(project) and type(project) == "number" and project ~= WOW_PROJECT_ID then
+		return false
+	end
+	local online = info.isOnline
+	if not IsSecret(online) and online == false then
+		return false
+	end
+	local name = info.characterName
+	if IsSecret(name) or type(name) ~= "string" or name == "" then
+		return false
+	end
+	local nameKey = NormToken(name)
+	local sawRealm = false
+	local function NoteRealm(realm)
+		if IsSecret(realm) or type(realm) ~= "string" or realm == "" then
+			return
+		end
+		sawRealm = true
+		local realmKey = NormToken(realm)
+		names[nameKey .. "-" .. realmKey] = true
+		if not mine or mine[realmKey] then
+			names[nameKey] = true
+		end
+	end
+	NoteRealm(info.realmName)
+	NoteRealm(info.realmDisplayName)
+	if not sawRealm then
+		names[nameKey] = true
+	end
+	return true
+end
+
+local function RebuildBNetNames()
+	local names = {}
+	local count = 0
+	local mine = PlayerRealmKeys()
+	local BN = C_BattleNet
+	local ok, num = false, 0
+	if type(BNGetNumFriends) == "function" and BN and type(BN.GetFriendNumGameAccounts) == "function" and type(BN.GetFriendGameAccountInfo) == "function" then
+		ok, num = pcall(BNGetNumFriends)
+	end
+	if ok and not IsSecret(num) and type(num) == "number" and num >= 1 then
+		if num > 1000 then
+			num = 1000
+		end
+		for i = 1, num do
+			local noted = false
+			local countOk, accounts = pcall(BN.GetFriendNumGameAccounts, i)
+			if countOk and not IsSecret(accounts) and type(accounts) == "number" and accounts > 0 then
+				for account = 1, accounts do
+					local infoOk, info = pcall(BN.GetFriendGameAccountInfo, i, account)
+					if infoOk and NoteBNetCharacter(names, mine, info) then
+						noted = true
+						count = count + 1
+					end
+				end
+			end
+			if not noted and type(BN.GetFriendAccountInfo) == "function" then
+				local accountOk, account = pcall(BN.GetFriendAccountInfo, i)
+				if accountOk and ReadableTable(account) then
+					if NoteBNetCharacter(names, mine, account.gameAccountInfo) then
+						count = count + 1
+					end
+				end
+			end
+		end
+	end
+	bnetNames = names
+	bnetCount = count
+end
+
+local function BattleNetByGuid(unit)
+	local BN = C_BattleNet
+	if not (BN and type(BN.GetGameAccountInfoByGUID) == "function" and type(UnitGUID) == "function") then
+		return nil
+	end
+	local ok, guid = pcall(UnitGUID, unit)
+	if not ok or IsSecret(guid) or type(guid) ~= "string" or guid == "" then
+		return nil
+	end
+	local found, info = pcall(BN.GetGameAccountInfoByGUID, guid)
+	if not found or IsSecret(info) then
+		return nil
+	end
+	if info == nil then
+		return false
+	end
+	if ReadableTable(info) then
+		return true
+	end
+	return nil
+end
+
+local function BattleNetByName(unit)
+	if bnetNames == nil then
+		RebuildBNetNames()
+	end
+	local ok, name, server = pcall(UnitName, unit)
+	if not ok or IsSecret(name) or type(name) ~= "string" or name == "" then
+		return nil
+	end
+	if IsSecret(server) or type(server) ~= "string" or server == "" then
+		server = nil
+	end
+	local nameKey = NormToken(name)
+	if server then
+		return bnetNames[nameKey .. "-" .. NormToken(server)] == true
+	end
+	return bnetNames[nameKey] == true
+end
+
+local function BattleNetFriend(unit)
+	local byGuid = BattleNetByGuid(unit)
+	if byGuid == true then
+		return true
+	end
+	return BattleNetByName(unit)
+end
+
 local function PetGuid(unit)
 	if type(UnitGUID) ~= "function" then
 		return false, nil
@@ -601,6 +762,9 @@ local function Classify(unit, depth)
 	local friendNamed = FriendByName(unit)
 	if selection == 8 or friendNamed == true then
 		return "friend", selection == 8 and "selection 8" or "GetFriendInfo"
+	end
+	if BattleNetFriend(unit) == true then
+		return "friend", "Battle.net"
 	end
 	if selection == 16 then
 		return "recent", "selection 16"
@@ -1293,6 +1457,10 @@ local function Dump()
 		end
 	end
 	Log("party members besides you: " .. partyCount)
+	if bnetNames == nil then
+		RebuildBNetNames()
+	end
+	Log("Battle.net characters online: " .. bnetCount)
 	FlattenDistanceAlpha()
 	EnablePetNameplates()
 	local openCount, protectedCount = LogPlateAvailability("dump")
@@ -1304,6 +1472,110 @@ local function Dump()
 	RefreshPlates("dump")
 end
 
+local MAX_DISTANCE_CVAR = "nameplateMaxDistance"
+local MAX_DISTANCE_LIMIT = 1000
+
+local function Say(msg)
+	print("|cffFF69B4Power Plate:|r " .. SafeString(msg))
+end
+
+local function StoredMaxDistance()
+	local value = type(PowerPlateDB) == "table" and tonumber(PowerPlateDB.maxDistance)
+	if value and value > 0 then
+		return value
+	end
+end
+
+local function StoreMaxDistance(value)
+	if value == nil then
+		if type(PowerPlateDB) == "table" then
+			PowerPlateDB.maxDistance = nil
+			PruneDB()
+		end
+		return
+	end
+	if type(PowerPlateDB) ~= "table" then
+		PowerPlateDB = {}
+	end
+	PowerPlateDB.maxDistance = value
+end
+
+local function DefaultMaxDistance()
+	local getDefault = C_CVar and C_CVar.GetCVarDefault or GetCVarDefault
+	if getDefault then
+		local ok, value = pcall(getDefault, MAX_DISTANCE_CVAR)
+		if ok and tonumber(value) then
+			return tonumber(value)
+		end
+	end
+	return 60
+end
+
+-- Returns whether the game accepted the call, and the value the CVar reads back afterwards.
+local function ApplyMaxDistance(value)
+	local setter = C_CVar and C_CVar.SetCVar or SetCVar
+	if not setter then
+		return false, ReadCVar(MAX_DISTANCE_CVAR), "no SetCVar available"
+	end
+	local ok, result = pcall(setter, MAX_DISTANCE_CVAR, tostring(value))
+	local current = ReadCVar(MAX_DISTANCE_CVAR)
+	if not ok then
+		return false, current, SafeString(result)
+	end
+	if result == false then
+		return false, current, "the game refused the change"
+	end
+	return true, current
+end
+
+local function ReportMaxDistance(requested)
+	local current = tonumber(ReadCVar(MAX_DISTANCE_CVAR))
+	if not requested then
+		Say("max nameplate distance is " .. SafeString(current) .. " yards.")
+	elseif current and math.abs(current - requested) < 0.01 then
+		Say("max nameplate distance set to " .. SafeString(current) .. " yards.")
+	else
+		Say("asked for " .. SafeString(requested) .. " yards but the game reports " .. SafeString(current)
+			.. ". The client clamped or ignored the change.")
+	end
+end
+
+local function HandleMaxDistance(arg)
+	if arg == "" then
+		ReportMaxDistance(nil)
+		return
+	end
+	local value
+	if arg == "reset" or arg == "default" then
+		value = DefaultMaxDistance()
+		StoreMaxDistance(nil)
+	else
+		value = tonumber(arg)
+		if not value or value < 1 or value > MAX_DISTANCE_LIMIT then
+			Say("max needs a number from 1 to " .. MAX_DISTANCE_LIMIT .. ", or reset. Example: /powerplate max=60")
+			return
+		end
+		StoreMaxDistance(value)
+	end
+	local ok, _, err = ApplyMaxDistance(value)
+	if not ok then
+		Say("could not set max nameplate distance: " .. SafeString(err))
+		return
+	end
+	ReportMaxDistance(value)
+end
+
+local function HandleSlash(msg)
+	local command, arg = strtrim(msg or ""):lower():match("^(%a*)%s*=?%s*(.-)$")
+	if command == "" or command == "dump" then
+		Dump()
+	elseif command == "max" or command == "distance" then
+		HandleMaxDistance(arg)
+	else
+		Say("commands: /powerplate (status dump), /powerplate max=X (nameplate range in yards), /powerplate max (show), /powerplate max=reset")
+	end
+end
+
 local events = CreateFrame("Frame")
 local REFRESH_EVENTS = {
 	GUILD_ROSTER_UPDATE = true,
@@ -1313,11 +1585,19 @@ local REFRESH_EVENTS = {
 	RECENT_ALLY_DATA_UPDATED = true,
 	UNIT_PET = true,
 }
+local BNET_EVENTS = {
+	BN_CONNECTED = true,
+	BN_FRIEND_INFO_CHANGED = true,
+	BN_FRIEND_LIST_SIZE_CHANGED = true,
+}
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 events:RegisterEvent("GROUP_ROSTER_UPDATE")
 for eventName in pairs(REFRESH_EVENTS) do
+	events:RegisterEvent(eventName)
+end
+for eventName in pairs(BNET_EVENTS) do
 	events:RegisterEvent(eventName)
 end
 events:SetScript("OnEvent", function(_, event, arg1)
@@ -1329,10 +1609,16 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		end
 		EnsureHooks()
 	elseif event == "PLAYER_LOGIN" then
+		bnetNames = nil
 		EnsureDB()
 		BuildOptions()
 		EnsureHooks()
-		Log("ready v" .. VERSION .. ". Options: Escape, Options, AddOns, Power Plate. /powerplate dumps.")
+		Log("ready v" .. VERSION .. ". Options: Escape, Options, AddOns, Power Plate. /powerplate dumps. /powerplate max=X sets nameplate range.")
+		local savedMax = StoredMaxDistance()
+		if savedMax then
+			local ok, current, err = ApplyMaxDistance(savedMax)
+			Log(MAX_DISTANCE_CVAR .. " saved=" .. savedMax .. " now=" .. SafeString(current) .. (ok and "" or " FAILED " .. SafeString(err)))
+		end
 		FlattenDistanceAlpha()
 		EnablePetNameplates()
 		local openCount, protectedCount = LogPlateAvailability("login")
@@ -1356,6 +1642,9 @@ events:SetScript("OnEvent", function(_, event, arg1)
 			EnableFriendlyNameplates()
 		end
 		RefreshPlates("group update")
+	elseif BNET_EVENTS[event] then
+		bnetNames = nil
+		RefreshPlates(event, true)
 	elseif REFRESH_EVENTS[event] then
 		RefreshPlates(event, true)
 	end
@@ -1363,6 +1652,6 @@ end)
 
 SLASH_POWERPLATE1 = "/powerplate"
 SLASH_POWERPLATE2 = "/pp"
-SlashCmdList.POWERPLATE = Dump
+SlashCmdList.POWERPLATE = HandleSlash
 
 EnsureHooks()
