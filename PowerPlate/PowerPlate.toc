@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Power Plate
+## Notes: Colors party, raid, guild, friend, recent-ally, and other player nameplates. Each category can be hidden.
+## IconTexture: Interface\AddOns\PowerPlate\Icon
+## SavedVariables: PowerPlateDB
+
+Version.lua
+PowerPlate.lua
